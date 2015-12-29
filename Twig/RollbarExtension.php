@@ -2,7 +2,11 @@
 
 namespace Ftrrtf\RollbarBundle\Twig;
 
+use Exception;
 use Ftrrtf\RollbarBundle\Helper\UserHelper;
+use Ftrrtf\RollbarBundle\Provider\CheckIgnoreFunctionProviderInterface;
+use RuntimeException;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
  * Class RollbarExtension
@@ -27,15 +31,26 @@ class RollbarExtension extends \Twig_Extension
     private $userHelper;
 
     /**
-     * @param            $notifierOptions
-     * @param            $environmentOptions
-     * @param UserHelper $userHelper
+     * @var ContainerInterface
      */
-    public function __construct($notifierOptions, $environmentOptions, UserHelper $userHelper)
-    {
+    private $container;
+
+    /**
+     * @param $notifierOptions
+     * @param $environmentOptions
+     * @param UserHelper $userHelper
+     * @param ContainerInterface $container
+     */
+    public function __construct(
+        $notifierOptions,
+        $environmentOptions,
+        UserHelper $userHelper,
+        ContainerInterface $container
+    ) {
         $this->notifierOptions    = $notifierOptions;
         $this->environmentOptions = $environmentOptions;
         $this->userHelper         = $userHelper;
+        $this->container          = $container;
     }
 
     /**
@@ -110,10 +125,12 @@ END_HTML;
     protected function getCheckIgnoreConfig()
     {
         $allowedHosts = json_encode($this->notifierOptions['allowed_js_hosts']);
+        $customCheckIgnoreFunction = $this->getCustomCheckIgnoreFunction($this->notifierOptions['check_ignore_function_provider']);
 
         return <<<END_HTML
 (function(Rollbar) {
     var allowedHosts = {$allowedHosts};
+    var customCheckIgnoreFunction = {$customCheckIgnoreFunction};
     if (allowedHosts.length === 0) {
         allowedHosts.push(window.location.origin);
     }
@@ -141,6 +158,10 @@ END_HTML;
 
     function ignoreRemoteUncaught(isUncaught, args, payload) {
         try {
+            if (typeof customCheckIgnoreFunction === 'function' && customCheckIgnoreFunction(isUncaught, args, payload)) {
+                return true;
+            }
+
             //this prevents breaking simple string reporting
             if (isLogMessage(payload)) {
                 return false;
@@ -162,6 +183,34 @@ END_HTML;
 })(Rollbar);
 END_HTML;
 
+    }
+
+    /**
+     * @param string $checkIgnoreFunctionProvider
+     *
+     * @return string
+     * @throws RuntimeException
+     */
+    protected function getCustomCheckIgnoreFunction($checkIgnoreFunctionProvider)
+    {
+        $functionBody = "''";
+
+        if ($checkIgnoreFunctionProvider) {
+            try {
+                $customIgnoreFunctionProvider = $this->container->get($checkIgnoreFunctionProvider);
+            } catch (Exception $exception) {
+                throw new RuntimeException('Could not load check_ignore_function_provider service');
+            }
+            if ($customIgnoreFunctionProvider instanceof CheckIgnoreFunctionProviderInterface) {
+                $functionBody = $customIgnoreFunctionProvider->getCheckIgnoreFunctionCode();
+            } else {
+                throw new RuntimeException(
+                    'check_ignore_function_provider service should implement CheckIgnoreFunctionProviderInterface'
+                );
+            }
+        }
+
+        return $functionBody;
     }
 
     /**

@@ -12,6 +12,7 @@
             <argument>%ftrrtf_rollbar.notifier.client.options%</argument>
             <argument>%ftrrtf_rollbar.environment.options%</argument>
             <argument type="service" id="ftrrtf_rollbar.helper.user"/>
+            <argument type="service" id="service_container"/>
             <tag name="twig.extension" />
         </service>
     </services>
